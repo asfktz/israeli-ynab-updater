@@ -1,0 +1,137 @@
+import flatMap from 'lodash/flatMap';
+import uniq from 'lodash/uniq';
+import keyBy from 'lodash/keyBy';
+import round from 'lodash/round';
+
+import axios from 'axios';
+import fx from 'money';
+import moment from 'moment';
+
+import { CONFIG_FOLDER, LOCAL_CURRENCY } from '../definitions';
+import { readJsonFile, writeJsonFile } from '../helpers/files';
+
+import { tryCatch } from '../helpers/utils';
+
+const all = Promise.all.bind(Promise);
+
+function asRateDate(date) {
+  return moment(date).format('YYYY-MM-DD');
+}
+
+function selectCurrency(txn) {
+  // Todo: normalize `NIS` to `ILS` in israeli-bank-scrapers
+  return (txn.originalCurrency === 'NIS')
+    ? 'ILS'
+    : txn.originalCurrency;
+}
+
+function getDates(accounts) {
+  const dates = flatMap(accounts, 'txns')
+    .filter(txn => selectCurrency(txn) !== LOCAL_CURRENCY)
+    .map(txn => asRateDate(txn.date));
+
+  return uniq(dates);
+}
+
+async function readCache() {
+  const cache = await readJsonFile(`${CONFIG_FOLDER}/rates.json`);
+  return cache || {};
+}
+
+async function writeCache(rates) {
+  return writeJsonFile(`${CONFIG_FOLDER}/rates.json`, rates);
+}
+
+async function fetch(date, appID) {
+  const url = `https://openexchangerates.org/api/historical/${date}.json?app_id=${appID}`;
+
+  const [err, response] = await tryCatch(axios.get(url));
+
+  if (err) {
+    console.log(url);
+    console.error(err);
+    throw err;
+  }
+
+  const { timestamp, base, rates } = response.data;
+
+  return {
+    date,
+    timestamp,
+    base,
+    rates,
+  };
+}
+
+async function getRates(dates, cache, appID) {
+  const rates = await all(dates.map((date) => {
+    if (cache[date]) {
+      console.log(date, 'from cache');
+      return cache[date];
+    }
+
+    console.log(date, 'fetching...');
+    return fetch(date, appID);
+  }));
+
+  return keyBy(rates, 'date');
+}
+
+const createConvertor = (rate, from, to) => (amount) => {
+  if (!amount) return null;
+
+  // Keep an eye on this one.
+  // fx is a singleton, therefore changing its
+  // "base" and "rates" properties here
+  // will affect every other usage after that.
+  fx.base = rate.base;
+  fx.rates = rate.rates;
+
+  const convertAmount = fx.convert(amount, { from, to });
+
+  // As precaution, we'll reset those values immediately.
+  fx.base = null;
+  fx.rates = null;
+
+  return round(convertAmount, 2);
+};
+
+function prepareTxn(txn, rates) {
+  const currency = selectCurrency(txn);
+
+  if (currency === LOCAL_CURRENCY) {
+    return { ...txn, meta: { ...txn.meta, converted: false } };
+  }
+
+  const date = asRateDate(txn.date);
+  const rate = rates[date];
+  const convertFx = createConvertor(rate, currency, LOCAL_CURRENCY);
+
+  return {
+    ...txn,
+    chargedAmount: convertFx(txn.chargedAmount),
+    originalAmount: convertFx(txn.originalAmount),
+    meta: {
+      ...txn.meta,
+      converted: true,
+      original: {
+        originalCurrency: txn.originalCurrency,
+        chargedAmount: txn.chargedAmount,
+        originalAmount: txn.originalAmount,
+      },
+    },
+  };
+}
+
+export default async function convert(accounts, appID) {
+  const cache = await readCache();
+  const dates = await getDates(accounts);
+  const rates = await getRates(dates, cache, appID);
+
+  await writeCache(rates);
+
+  return accounts.map((account) => {
+    const txns = account.txns.map(txn => prepareTxn(txn, rates));
+    return { ...account, txns };
+  });
+}

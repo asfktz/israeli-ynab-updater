@@ -12,7 +12,7 @@ function validateNonEmpty(field, input) {
   return `${field} must be non empty`;
 }
 
-export default async function () {
+async function scraperSetup() {
   const scraperNameResult = await inquirer.prompt([{
     type: 'list',
     name: 'scraperName',
@@ -37,4 +37,36 @@ export default async function () {
   const encryptedCredentials = enryptCredentials(credentialsResult);
   await writeJsonFile(`${CONFIG_FOLDER}/${scraperNameResult.scraperName}.json`, encryptedCredentials);
   console.log(`credentials file saved for ${scraperNameResult.scraperName}`);
+}
+
+async function fxSetup() {
+  const { appID } = await inquirer.prompt({
+    type: 'input',
+    name: 'appID',
+    message: 'Enter your openexchangerates.org app ID:',
+  });
+
+  const encryptedAppID = enryptCredentials({ appID });
+  await writeJsonFile(`${CONFIG_FOLDER}/openexchangerates.json`, encryptedAppID);
+  console.log('credentials file saved for openexchangerates.org');
+}
+
+export default async function () {
+  const { next } = await inquirer.prompt({
+    type: 'list',
+    name: 'next',
+    message: 'What would you like to setup?',
+    choices: [
+      {
+        name: 'a new scraper',
+        value: scraperSetup,
+      },
+      {
+        name: 'openexchangerates.org',
+        value: fxSetup,
+      },
+    ],
+  });
+
+  await next();
 }
