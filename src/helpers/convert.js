@@ -2,8 +2,9 @@ import flatMap from 'lodash/flatMap';
 import uniq from 'lodash/uniq';
 import keyBy from 'lodash/keyBy';
 import round from 'lodash/round';
+import debounce from 'lodash/debounce';
 
-import axios from 'axios';
+import oxr from 'oxr';
 import fx from 'money';
 import moment from 'moment';
 
@@ -20,61 +21,20 @@ function asRateDate(date) {
 
 function selectCurrency(txn) {
   // Todo: normalize `NIS` to `ILS` in israeli-bank-scrapers
-  return (txn.originalCurrency === 'NIS')
-    ? 'ILS'
-    : txn.originalCurrency;
+  if (txn.originalCurrency === 'NIS') {
+    return 'ILS';
+  }
+
+  return txn.originalCurrency;
 }
 
 function getDates(accounts) {
-  const dates = flatMap(accounts, 'txns')
+  const txns = flatMap(accounts, 'txns');
+  const dates = uniq(txns
     .filter(txn => selectCurrency(txn) !== LOCAL_CURRENCY)
-    .map(txn => asRateDate(txn.date));
+    .map(txn => asRateDate(txn.date)));
 
-  return uniq(dates);
-}
-
-async function readCache() {
-  const cache = await readJsonFile(`${CONFIG_FOLDER}/rates.json`);
-  return cache || {};
-}
-
-async function writeCache(rates) {
-  return writeJsonFile(`${CONFIG_FOLDER}/rates.json`, rates);
-}
-
-async function fetch(date, appID) {
-  const url = `https://openexchangerates.org/api/historical/${date}.json?app_id=${appID}`;
-
-  const [err, response] = await tryCatch(axios.get(url));
-
-  if (err) {
-    console.log(url);
-    console.error(err);
-    throw err;
-  }
-
-  const { timestamp, base, rates } = response.data;
-
-  return {
-    date,
-    timestamp,
-    base,
-    rates,
-  };
-}
-
-async function getRates(dates, cache, appID) {
-  const rates = await all(dates.map((date) => {
-    if (cache[date]) {
-      console.log(date, 'from cache');
-      return cache[date];
-    }
-
-    console.log(date, 'fetching...');
-    return fetch(date, appID);
-  }));
-
-  return keyBy(rates, 'date');
+  return dates;
 }
 
 const createConvertor = (rate, from, to) => (amount) => {
@@ -123,12 +83,15 @@ function prepareTxn(txn, rates) {
   };
 }
 
-export default async function convert(accounts, appID) {
-  const cache = await readCache();
-  const dates = await getDates(accounts);
-  const rates = await getRates(dates, cache, appID);
 
-  await writeCache(rates);
+export default async function convert(accounts, appId) {
+  const oxr = rates.createClient({
+    appId,
+    cachePath: `${CONFIG_FOLDER}/rates.json`,
+  });
+
+  const dates = await getDates(accounts);
+  const rates = await all(dates.map(date => oxr.historical(date)));
 
   return accounts.map((account) => {
     const txns = account.txns.map(txn => prepareTxn(txn, rates));

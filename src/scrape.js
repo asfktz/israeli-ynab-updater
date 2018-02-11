@@ -9,7 +9,7 @@ import { decryptCredentials } from './helpers/credentials';
 import { SCRAPERS, createScraper } from './helpers/scrapers';
 import convert from './helpers/convert';
 import { tryCatch } from './helpers/utils';
-
+import result from './data/isracard.json';
 
 async function getParameters() {
   const result = await inquirer.prompt([
@@ -91,45 +91,45 @@ async function readEncrypted(filename) {
 }
 
 export default async function () {
-  const { scraperName, combineInstallments } = await getParameters();
-  // const scraperName = 'leumiCard';
-  // const combineInstallments = false;
-  const credentials = await readEncrypted(scraperName);
+  // const { scraperName, combineInstallments } = await getParameters();
 
-  if (!credentials) {
-    console.log('Could not find credentials file');
-    // TODO: ask 'would you like to set it now?'
-    return;
-  }
+  // const credentials = await readEncrypted(scraperName);
 
-  const options = {
-    companyId: scraperName,
-    startDate: moment().startOf('month').subtract(4, 'month').toDate(),
-    combineInstallments,
-    verbose: false,
-  };
+  // if (!credentials) {
+  //   console.log('Could not find credentials file');
+  //   // TODO: ask 'would you like to set it now?'
+  //   return;
+  // }
 
-  const scraper = createScraper(options);
+  // const options = {
+  //   companyId: scraperName,
+  //   startDate: moment().startOf('month').subtract(4, 'month').toDate(),
+  //   combineInstallments,
+  //   verbose: false,
+  // };
 
-  scraper.onProgress((companyId, payload) => {
-    console.log(`${companyId}: ${payload.type}`);
-  });
+  // const scraper = createScraper(options);
 
-  const [scraperErr, result] = await tryCatch(scraper.scrape(credentials));
-  // const [scraperErr, result] = await tryCatch(readJsonFile(`./src/data/${scraperName}.json`));
+  // scraper.onProgress((companyId, payload) => {
+  //   console.log(`${companyId}: ${payload.type}`);
+  // });
 
-  if (scraperErr) {
-    console.error(scraperErr);
-    return;
-  }
+  // const [scraperErr, result] = await tryCatch(scraper.scrape(credentials));
+  // // const [scraperErr, result] = await tryCatch(readJsonFile(`./src/data/${scraperName}.json`));
 
-  if (!result.success) {
-    console.log(`error type: ${result.errorType}`);
-    console.log('error:', result.errorMessage);
-    return;
-  }
+  // if (scraperErr) {
+  //   console.error(scraperErr);
+  //   return;
+  // }
 
-  console.log(`success: ${result.success}`);
+  // if (!result.success) {
+  //   console.log(`error type: ${result.errorType}`);
+  //   console.log('error:', result.errorMessage);
+  //   return;
+  // }
+
+  // console.log(`success: ${result.success}`);
+
 
   const fxCredentials = await readEncrypted('openexchangerates');
 
