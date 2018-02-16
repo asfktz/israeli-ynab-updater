@@ -1,21 +1,46 @@
 import oxr from 'oxr';
+import moment from 'moment';
+import { readJsonFile, writeJsonFile } from '../helpers/files';
+import { all } from './async';
 
-const save = debounce((cachePath, rates) => writeJsonFile(cachePath, rates), 500);
+async function fetch(client, cache, dates) {
+  const rates = await cache.read();
 
-export await function createClient (appId, cachePath) {
-  const service = oxr.factory({ appId });
-  const rates = await readJsonFile(cachePath);
+  await all(dates, async (rawDate) => {
+    const date = moment(rawDate).format('YYYY-MM-DD');
 
-  return oxr.cache({
-    method: 'historical',
-    store: {
-      get: (date) => {
-        return rates[date];
-      },
-      put: (value, date) => {
-        rates[date] = value;
-        save(cachePath, rates);
-      },
-    },
-  }, service);
+    if (!rates[date]) {
+      rates[date] = await oxr.historical(date);
+    }
+
+    return rates[date];
+  });
+
+  await cache.write(rates);
+
+  return rates;
 }
+
+function cacheFactory(cachePath) {
+  async function read() {
+    const records = await readJsonFile(cachePath);
+    return records || {};
+  }
+
+  async function write(records) {
+    return writeJsonFile(cachePath, records);
+  }
+
+  return { read, write };
+}
+
+function factory({ cachePath, appId }) {
+  const storage = cacheFactory(cachePath);
+  const client = oxr.factory({ appId });
+
+  return {
+    fetch: (...args) => fetch(client, storage, ...args),
+  };
+}
+
+export default { factory };

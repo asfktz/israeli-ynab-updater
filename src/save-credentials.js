@@ -40,14 +40,14 @@ async function scraperSetup() {
 }
 
 async function fxSetup() {
-  const { appID } = await inquirer.prompt({
+  const { appId } = await inquirer.prompt({
     type: 'input',
     name: 'appID',
     message: 'Enter your openexchangerates.org app ID:',
   });
 
-  const encryptedAppID = enryptCredentials({ appID });
-  await writeJsonFile(`${CONFIG_FOLDER}/openexchangerates.json`, encryptedAppID);
+  const encryptedAppId = enryptCredentials({ appId });
+  await writeJsonFile(`${CONFIG_FOLDER}/openexchangerates.json`, encryptedAppId);
   console.log('credentials file saved for openexchangerates.org');
 }
 

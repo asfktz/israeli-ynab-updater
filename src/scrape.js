@@ -1,18 +1,18 @@
 import moment from 'moment';
-import inquirer from 'inquirer';
+import _ from 'lodash';
 import json2csv from 'json2csv';
-import currencyFormatter from 'currency-formatter';
+import inquirer from 'inquirer';
 
-import { CONFIG_FOLDER, DOWNLOAD_FOLDER } from './definitions';
-import { writeFile, readJsonFile } from './helpers/files';
-import { decryptCredentials } from './helpers/credentials';
-import { SCRAPERS, createScraper } from './helpers/scrapers';
-import convert from './helpers/convert';
-import { tryCatch } from './helpers/utils';
-import result from './data/isracard.json';
+import { DOWNLOAD_FOLDER, CONFIG_FOLDER, SCRAPERS } from './definitions';
+import { createScraper } from './helpers/scrapers';
+import { tryCatch, all } from './helpers/async';
+import * as currency from './helpers/currency';
 
-async function getParameters() {
-  const result = await inquirer.prompt([
+import { writeFile, readEncrypted } from './helpers/files';
+import Rates from './helpers/rates';
+
+export default async function () {
+  const { scraperName, combineInstallments } = await inquirer.prompt([
     {
       type: 'list',
       name: 'scraperName',
@@ -31,126 +31,95 @@ async function getParameters() {
       default: true,
     },
   ]);
-  return result;
-}
 
-const selectInflow = (type, combineInstallments, chargedAmount, originalAmount) => {
-  return type !== 'installments' || !combineInstallments
-    ? chargedAmount
-    : originalAmount;
-};
+  const credentials = await readEncrypted(`${CONFIG_FOLDER}/${scraperName}.json`);
 
-function createMemo(txn, combineInstallments) {
-  if (!txn.meta.converted) {
-    return '';
-  }
-
-  const { original } = txn.meta;
-
-  const originalInflow = selectInflow(
-    txn.type,
-    combineInstallments,
-    original.chargedAmount,
-    original.originalAmount,
-  );
-
-  return currencyFormatter.format(originalInflow, { code: original.originalCurrency });
-}
-
-async function exportAccountData(scraperName, account, combineInstallments) {
-  console.log(`exporting ${account.txns.length} transactions for account # ${account.accountNumber}`);
-
-  const txns = account.txns.map((txn) => {
-    const inflow = selectInflow(
-      txn.type,
-      combineInstallments,
-      txn.chargedAmount,
-      txn.originalAmount,
-    );
-
-    return {
-      Date: moment(txn.date).format('DD/MM/YYYY'),
-      Payee: txn.description,
-      Inflow: inflow,
-      Installment: txn.installments ? txn.installments.number : null,
-      Total: txn.installments ? txn.installments.total : null,
-      Memo: createMemo(txn, combineInstallments),
-    };
-  });
-  const fields = ['Date', 'Payee', 'Inflow', 'Installment', 'Total', 'Memo'];
-  const csv = json2csv({ data: txns, fields, withBOM: true });
-  await writeFile(`${DOWNLOAD_FOLDER}/${scraperName} (${account.accountNumber}).csv`, csv);
-}
-
-async function readEncrypted(filename) {
-  const encryptedCredentials = await readJsonFile(`${CONFIG_FOLDER}/${filename}.json`);
-
-  return (encryptedCredentials)
-    ? decryptCredentials(encryptedCredentials)
-    : null;
-}
-
-export default async function () {
-  // const { scraperName, combineInstallments } = await getParameters();
-
-  // const credentials = await readEncrypted(scraperName);
-
-  // if (!credentials) {
-  //   console.log('Could not find credentials file');
-  //   // TODO: ask 'would you like to set it now?'
-  //   return;
-  // }
-
-  // const options = {
-  //   companyId: scraperName,
-  //   startDate: moment().startOf('month').subtract(4, 'month').toDate(),
-  //   combineInstallments,
-  //   verbose: false,
-  // };
-
-  // const scraper = createScraper(options);
-
-  // scraper.onProgress((companyId, payload) => {
-  //   console.log(`${companyId}: ${payload.type}`);
-  // });
-
-  // const [scraperErr, result] = await tryCatch(scraper.scrape(credentials));
-  // // const [scraperErr, result] = await tryCatch(readJsonFile(`./src/data/${scraperName}.json`));
-
-  // if (scraperErr) {
-  //   console.error(scraperErr);
-  //   return;
-  // }
-
-  // if (!result.success) {
-  //   console.log(`error type: ${result.errorType}`);
-  //   console.log('error:', result.errorMessage);
-  //   return;
-  // }
-
-  // console.log(`success: ${result.success}`);
-
-
-  const fxCredentials = await readEncrypted('openexchangerates');
-
-  if (!fxCredentials) {
-    console.log('Could not find openexchangerates\'s app ID');
+  if (!credentials) {
+    console.log('Could not find credentials file');
     // TODO: ask 'would you like to set it now?'
     return;
   }
 
-  const [convertError, accounts] = await tryCatch(convert(result.accounts, fxCredentials.appID));
+  const options = {
+    companyId: scraperName,
+    startDate: moment().startOf('month').subtract(4, 'month').toDate(),
+    combineInstallments,
+    verbose: false,
+  };
 
-  if (convertError) {
-    console.error(convertError);
+  const scraper = createScraper(options);
+
+  scraper.onProgress((companyId, payload) => {
+    console.log(`${companyId}: ${payload.type}`);
+  });
+
+  const [scraperErr, result] = await tryCatch(scraper.scrape(credentials));
+
+  if (scraperErr) {
+    console.error(scraperErr);
     return;
   }
 
-  const exports = accounts.map((account) => {
-    return exportAccountData(scraperName, account, combineInstallments);
+  if (!result.success) {
+    console.log(`error type: ${result.errorType}`);
+    console.log('error:', result.errorMessage);
+    return;
+  }
+
+  console.log(`success: ${result.success}`);
+
+  // TODO: PR this normalization logic to israeli-bank-scrapers
+  const normalizeCurrency = currency => ((currency) === 'NIS' ? 'ILS' : currency);
+  const accounts = _.map(result.accounts, account => ({
+    ...account,
+    txns: _.map(account.txns, (txn) => {
+      const originalCurrency = normalizeCurrency(txn.originalCurrency);
+      return { ...txn, originalCurrency };
+    }),
+  }));
+
+  const ratesService = Rates.factory({
+    appId: await readEncrypted(`${CONFIG_FOLDER}/openexchangerates.json`),
+    cachePath: `${CONFIG_FOLDER}/rates.json`,
   });
 
-  await Promise.all(exports);
+  const extractDates = _.flow([
+    accounts => _.flatMap(accounts, 'txns'),
+    txns => _.reject(txns, { originalCurrency: 'ILS' }),
+    txns => _.map(txns, 'date'),
+    dates => _.uniq(dates),
+  ]);
+
+  const dates = extractDates(accounts);
+  const rates = ratesService.fetch(dates);
+
+  await all(accounts, (account) => {
+    const txns = _.map(account.txns, (txn) => {
+      const { originalCurrency, date } = txn;
+      const isLocal = txn.originalCurrency === 'ILS';
+
+      const inflow = txn.type !== 'installments' || !combineInstallments
+        ? txn.chargedAmount
+        : txn.originalAmount;
+
+      return {
+        Date: moment(date).format('DD/MM/YYYY'),
+        Payee: txn.description,
+        Inflow: isLocal ? inflow : currency.convert(inflow, rates[date], originalCurrency, 'ILS'),
+        Installment: txn.installments ? txn.installments.number : null,
+        Total: txn.installments ? txn.installments.total : null,
+        Memo: isLocal ? '' : currency.format(inflow),
+      };
+    });
+
+    const csv = json2csv({
+      fields: ['Date', 'Payee', 'Inflow', 'Installment', 'Total', 'Memo'],
+      data: txns,
+      withBOM: true,
+    });
+
+    return writeFile(`${DOWNLOAD_FOLDER}/${scraperName} (${account.accountNumber}).csv`, csv);
+  });
 
   console.log(`${result.accounts.length} csv files saved under ${DOWNLOAD_FOLDER}`);
 }
