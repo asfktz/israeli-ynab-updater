@@ -15,8 +15,8 @@ import * as currency from './helpers/currency';
 import { writeFile, readEncrypted } from './helpers/files';
 import * as Rates from './helpers/rates';
 
-export default async function () {
-  const { scraperName, combineInstallments } = await inquirer.prompt([
+async function getParameters() {
+  const result = await inquirer.prompt([
     {
       type: 'list',
       name: 'scraperName',
@@ -35,6 +35,11 @@ export default async function () {
       default: true,
     },
   ]);
+  return result;
+}
+
+export default async function () {
+  const { scraperName, combineInstallments } = await getParameters();
 
   const credentials = await all({
     scraper: readEncrypted(`${CONFIG_FOLDER}/${scraperName}.json`),
