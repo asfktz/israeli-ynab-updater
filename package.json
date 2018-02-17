@@ -46,6 +46,7 @@
     "money": "^0.2.0",
     "open-exchange-rates": "^0.3.0",
     "oxr": "^1.1.0",
+    "promise-all-map": "^1.0.3",
     "yargs": "^10.0.3"
   }
 }

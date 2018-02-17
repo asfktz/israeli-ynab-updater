@@ -1,15 +1,19 @@
 import moment from 'moment';
-import _ from 'lodash';
 import json2csv from 'json2csv';
 import inquirer from 'inquirer';
+import all from 'promise-all-map';
+import flow from 'lodash/flow';
+import flatMap from 'lodash/flatMap';
+import reject from 'lodash/reject';
+import map from 'lodash/map';
+import uniq from 'lodash/uniq';
 
-import { DOWNLOAD_FOLDER, CONFIG_FOLDER, SCRAPERS } from './definitions';
-import { createScraper } from './helpers/scrapers';
-import { tryCatch, all } from './helpers/async';
+import { DOWNLOAD_FOLDER, CONFIG_FOLDER } from './definitions';
+import { createScraper, SCRAPERS } from './helpers/scrapers';
+import { tryCatch } from './helpers/async';
 import * as currency from './helpers/currency';
-
 import { writeFile, readEncrypted } from './helpers/files';
-import Rates from './helpers/rates';
+import * as Rates from './helpers/rates';
 
 export default async function () {
   const { scraperName, combineInstallments } = await inquirer.prompt([
@@ -32,10 +36,19 @@ export default async function () {
     },
   ]);
 
-  const credentials = await readEncrypted(`${CONFIG_FOLDER}/${scraperName}.json`);
+  const credentials = await all({
+    scraper: readEncrypted(`${CONFIG_FOLDER}/${scraperName}.json`),
+    oxr: readEncrypted(`${CONFIG_FOLDER}/openexchangerates.json`),
+  });
 
-  if (!credentials) {
-    console.log('Could not find credentials file');
+  if (!credentials.scraper) {
+    console.log(`Could not find credentials file for ${scraperName}`);
+    // TODO: ask 'would you like to set it now?'
+    return;
+  }
+
+  if (!credentials.oxr) {
+    console.log('Could not find credentials file for openexchangerates.org');
     // TODO: ask 'would you like to set it now?'
     return;
   }
@@ -53,7 +66,7 @@ export default async function () {
     console.log(`${companyId}: ${payload.type}`);
   });
 
-  const [scraperErr, result] = await tryCatch(scraper.scrape(credentials));
+  const [scraperErr, result] = await tryCatch(scraper.scrape(credentials.scraper));
 
   if (scraperErr) {
     console.error(scraperErr);
@@ -68,33 +81,39 @@ export default async function () {
 
   console.log(`success: ${result.success}`);
 
-  // TODO: PR this normalization logic to israeli-bank-scrapers
+
+  // Todo: Remove this block of code
+  // after israeli-bank-scrapers/pull/77 will be merged.
   const normalizeCurrency = currency => ((currency) === 'NIS' ? 'ILS' : currency);
-  const accounts = _.map(result.accounts, account => ({
+  const accounts = map(result.accounts, account => ({
     ...account,
-    txns: _.map(account.txns, (txn) => {
-      const originalCurrency = normalizeCurrency(txn.originalCurrency);
-      return { ...txn, originalCurrency };
+    txns: map(account.txns, (txn) => {
+      return {
+        ...txn,
+        originalCurrency: normalizeCurrency(txn.originalCurrency),
+      };
     }),
   }));
 
   const ratesService = Rates.factory({
-    appId: await readEncrypted(`${CONFIG_FOLDER}/openexchangerates.json`),
+    appId: credentials.oxr.appId,
     cachePath: `${CONFIG_FOLDER}/rates.json`,
   });
 
-  const extractDates = _.flow([
-    accounts => _.flatMap(accounts, 'txns'),
-    txns => _.reject(txns, { originalCurrency: 'ILS' }),
-    txns => _.map(txns, 'date'),
-    dates => _.uniq(dates),
+  const extractDates = flow([
+    accounts => flatMap(accounts, 'txns'),
+    txns => reject(txns, { originalCurrency: 'ILS' }),
+    txns => map(txns, 'date'),
+    dates => uniq(dates),
   ]);
 
   const dates = extractDates(accounts);
-  const rates = ratesService.fetch(dates);
+  const rates = await ratesService.fetch(dates);
 
-  await all(accounts, (account) => {
-    const txns = _.map(account.txns, (txn) => {
+  const files = await accounts.map((account) => {
+    const { accountNumber } = account;
+
+    const txns = account.txns.map((txn) => {
       const { originalCurrency, date } = txn;
       const isLocal = txn.originalCurrency === 'ILS';
 
@@ -102,23 +121,30 @@ export default async function () {
         ? txn.chargedAmount
         : txn.originalAmount;
 
+      const rate = Rates.select(rates, date);
+
       return {
         Date: moment(date).format('DD/MM/YYYY'),
         Payee: txn.description,
-        Inflow: isLocal ? inflow : currency.convert(inflow, rates[date], originalCurrency, 'ILS'),
+        Inflow: isLocal ? inflow : currency.convert(inflow, rate, originalCurrency, 'ILS'),
         Installment: txn.installments ? txn.installments.number : null,
         Total: txn.installments ? txn.installments.total : null,
-        Memo: isLocal ? '' : currency.format(inflow),
+        Memo: isLocal ? '' : currency.format(inflow, originalCurrency),
       };
     });
 
-    const csv = json2csv({
+    return { accountNumber, txns };
+  });
+
+  await all(files, ({ accountNumber, txns }) => {
+    const filepath = `${DOWNLOAD_FOLDER}/${scraperName} (${accountNumber})`;
+    const contents = json2csv({
       fields: ['Date', 'Payee', 'Inflow', 'Installment', 'Total', 'Memo'],
       data: txns,
       withBOM: true,
     });
 
-    return writeFile(`${DOWNLOAD_FOLDER}/${scraperName} (${account.accountNumber}).csv`, csv);
+    return writeFile(filepath, contents);
   });
 
   console.log(`${result.accounts.length} csv files saved under ${DOWNLOAD_FOLDER}`);

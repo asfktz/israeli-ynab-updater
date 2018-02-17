@@ -14,8 +14,3 @@ if (!args.mode || args.mode === 'scrape') {
 } else if (args.mode === 'credentials') {
   saveCredentials();
 }
-
-process.on('SIGINT', () => {
-  console.log('Good Bye!');
-  process.exit();
-});

@@ -1,10 +1,5 @@
-import map from 'lodash/map';
-import identity from 'lodash/identity';
 
-export function all(iterable, mapper = identity) {
-  return Promise.all(map(iterable, mapper));
-}
-
+// eslint-disable-next-line
 export async function tryCatch(promise) {
   let response;
 

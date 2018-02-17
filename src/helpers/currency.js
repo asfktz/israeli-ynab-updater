@@ -6,7 +6,7 @@ export function format(amount, code) {
   return currencyFormatter.format(amount, { code });
 }
 
-export default function convert(amount, rate, from, to) {
+export function convert(amount, rate, from, to) {
   fx.base = rate.base;
   fx.rates = rate.rates;
 

@@ -1,16 +1,21 @@
 import oxr from 'oxr';
 import moment from 'moment';
+import all from 'promise-all-map';
+
 import { readJsonFile, writeJsonFile } from '../helpers/files';
-import { all } from './async';
+
+function asRateDate(date) {
+  return moment(date).format('YYYY-MM-DD');
+}
 
 async function fetch(client, cache, dates) {
   const rates = await cache.read();
 
   await all(dates, async (rawDate) => {
-    const date = moment(rawDate).format('YYYY-MM-DD');
+    const date = asRateDate(rawDate);
 
     if (!rates[date]) {
-      rates[date] = await oxr.historical(date);
+      rates[date] = await client.historical(date);
     }
 
     return rates[date];
@@ -34,7 +39,7 @@ function cacheFactory(cachePath) {
   return { read, write };
 }
 
-function factory({ cachePath, appId }) {
+export function factory({ cachePath, appId }) {
   const storage = cacheFactory(cachePath);
   const client = oxr.factory({ appId });
 
@@ -43,4 +48,7 @@ function factory({ cachePath, appId }) {
   };
 }
 
-export default { factory };
+export function select(rates, rawDate) {
+  const date = asRateDate(rawDate);
+  return rates[date];
+}
