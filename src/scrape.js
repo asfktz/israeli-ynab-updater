@@ -2,12 +2,7 @@ import moment from 'moment';
 import json2csv from 'json2csv';
 import inquirer from 'inquirer';
 import all from 'promise-all-map';
-import flow from 'lodash/flow';
-import flatMap from 'lodash/flatMap';
-import reject from 'lodash/reject';
-import map from 'lodash/map';
-import uniq from 'lodash/uniq';
-
+import { flow, flatMap, reject, map, uniq } from 'lodash';
 import { DOWNLOAD_FOLDER, CONFIG_FOLDER } from './definitions';
 import { createScraper, SCRAPERS } from './helpers/scrapers';
 import { tryCatch } from './helpers/async';

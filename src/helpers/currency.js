@@ -1,5 +1,5 @@
 import currencyFormatter from 'currency-formatter';
-import round from 'lodash/round';
+import { round } from 'lodash';
 import fx from 'money';
 
 export function format(amount, code) {
