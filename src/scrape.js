@@ -83,15 +83,14 @@ export default async function () {
 
 
   // Todo: Remove this block of code
-  // after israeli-bank-scrapers/pull/77 will be merged.
-  const normalizeCurrency = currency => ((currency) === 'NIS' ? 'ILS' : currency);
-  const accounts = map(result.accounts, account => ({
+  // after israeli-bank-scrapers/pull/77 will be merged
+  const accounts = result.accounts.map(account => ({
     ...account,
-    txns: map(account.txns, (txn) => {
-      return {
-        ...txn,
-        originalCurrency: normalizeCurrency(txn.originalCurrency),
-      };
+    txns: account.txns.map((txn) => {
+      const originalCurrency = (txn.originalCurrency === 'NIS')
+        ? 'ILS' : txn.originalCurrency;
+
+      return { ...txn, originalCurrency };
     }),
   }));
 
